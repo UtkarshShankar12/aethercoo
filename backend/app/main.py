@@ -1,8 +1,13 @@
+import sys
+import os
 import logging
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+
+# Ensure the 'backend' directory is on PYTHONPATH for Vercel serverless imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load local environment variables from .env if present
 load_dotenv()
