@@ -1,15 +1,22 @@
 import logging
 import json
+import asyncio
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Query
 from typing import List
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 
 from app.schemas import RunCreate, RunDashboardOutput, AdvisorRequest
 from app.database import get_db
-from app.agents.orchestrator import run_orchestration, anthropic_client
+from app.agents.orchestrator import run_orchestration
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+# Configure Gemini
+genai.configure(api_key=settings.gemini_api_key)
 
 # Connection Manager for WebSockets
 class ConnectionManager:
@@ -44,11 +51,37 @@ manager = ConnectionManager()
 @router.post("")
 async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
     """
-    Submits a business idea. Enforces SQLite rate limits (5 runs/hour) and initiates the sequential pipeline.
+    Submits a business idea. Enforces SQLite capacity metrics, daily caps, and hourly limits.
     """
     db = get_db()
     
-    # 1. Rate Limit Enforcement
+    # 1. Global Capacity Cap Check (80% of 1,500 daily requests = 1,200 requests)
+    try:
+        global_count = db.get_global_request_count_24h()
+        if global_count >= 1200:
+            raise HTTPException(
+                status_code=429,
+                detail="Daily capacity reached. AetherCOO is currently at peak load capacity. Please try again tomorrow."
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Global capacity check database error: {str(e)}")
+
+    # 2. Per-User daily run limit (cap of 10 runs/day)
+    try:
+        user_runs_24h = db.get_user_run_count_24h(run_data.user_id)
+        if user_runs_24h >= 10:
+            raise HTTPException(
+                status_code=429,
+                detail="Daily run limit reached. Demo users are capped at 10 runs per day."
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Per-user capacity check database error: {str(e)}")
+
+    # 3. Hourly Rate Limit Enforcement (5 runs/hour)
     now = datetime.utcnow()
     one_hour_ago = now - timedelta(hours=1)
     
@@ -64,7 +97,7 @@ async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
     except Exception as e:
         logger.error(f"Rate limiting check database error: {str(e)}")
 
-    # 2. Insert Run in 'pending' state
+    # 4. Insert Run in 'pending' state
     try:
         run_record = db.create_run(run_data.user_id, run_data.idea)
         run_id = run_record['id']
@@ -72,11 +105,11 @@ async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
         logger.error(f"Database insertion failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Database connection error: {str(e)}")
 
-    # 3. Define the asynchronous callback for broadcasting over Websocket
+    # 5. Define the asynchronous callback for broadcasting over Websocket
     async def broadcast_status(message: dict):
         await manager.broadcast(run_id, message)
 
-    # 4. Trigger Orchestrator in background
+    # 6. Trigger Orchestrator in background
     background_tasks.add_task(
         run_orchestration,
         run_id=run_id,
@@ -116,7 +149,6 @@ async def get_run(run_id: str):
     
     # If not completed, return status metadata
     if run_record['status'] != 'completed':
-        # Safely parse ISO format timestamp
         try:
             ts = int(datetime.fromisoformat(run_record['created_at'].replace('Z', '+00:00')).timestamp() * 1000)
         except Exception:
@@ -201,7 +233,20 @@ async def ask_advisor(run_id: str, request: AdvisorRequest):
     """
     db = get_db()
     
-    # 1. Fetch dashboard context
+    # 1. Global Capacity Cap Check (80% of 1,500 daily requests = 1,200 requests)
+    try:
+        global_count = db.get_global_request_count_24h()
+        if global_count >= 1200:
+            raise HTTPException(
+                status_code=429,
+                detail="Daily capacity reached. AetherCOO is currently at peak load capacity. Please try again tomorrow."
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Global capacity check database error: {str(e)}")
+
+    # 2. Fetch dashboard context
     dashboard = db.get_dashboard(run_id)
     if not dashboard:
         raise HTTPException(status_code=404, detail="Dashboard not compiled yet. Complete the validation sprint first.")
@@ -231,36 +276,62 @@ DASHBOARD ANALYSIS CONTEXT:
 Reference the specific calculated costs (INR/₹), competitor names, SWOT elements, and roadmap steps in your responses to keep recommendations realistic. Never promise success; highlight what needs testing first.
 """
 
-    # Format previous message history for Claude API
-    messages = []
+    # Format previous message history for Gemini API
+    gemini_messages = []
     for msg in request.messages:
-        role = "user" if msg.sender == "You" else "assistant"
-        messages.append({"role": role, "content": msg.text})
+        role = "user" if msg.sender == "You" else "model"
+        gemini_messages.append({
+            "role": role,
+            "parts": [msg.text]
+        })
 
     # Append new user question
-    messages.append({"role": "user", "content": request.new_message})
+    gemini_messages.append({
+        "role": "user",
+        "parts": [request.new_message]
+    })
 
-    # Execute Claude Call
-    try:
-        def _call_claude():
-            return anthropic_client.messages.create(
-                model="claude-3-5-sonnet-20240620",
-                max_tokens=1000,
-                system=system_prompt,
-                messages=messages
-            )
+    # Execute Gemini Call with exponential backoff on 429
+    model_instance = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=system_prompt
+    )
 
-        response = await asyncio.to_thread(_call_claude)
-        response_text = response.content[0].text
-        
-        # Save messages to database
-        db.save_advisor_messages(run_id, request.new_message, response_text)
+    max_attempts = 3
+    backoff = 1.0
 
-        return {"text": response_text}
+    for attempt in range(1, max_attempts + 1):
+        try:
+            def _call_gemini():
+                return model_instance.generate_content(contents=gemini_messages)
 
-    except Exception as e:
-        logger.error(f"Advisor API call failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"AI Advisor service error: {str(e)}")
+            response = await asyncio.to_thread(_call_gemini)
+            response_text = response.text
+            break
+        except google_exceptions.ResourceExhausted as rate_err:
+            logger.warning(f"Advisor API 429 rate limit exceeded. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
+            if attempt == max_attempts:
+                raise HTTPException(status_code=429, detail="Daily capacity reached. Please try again later.")
+            await asyncio.sleep(backoff)
+            backoff *= 2.0
+        except Exception as e:
+            err_msg = str(e).lower()
+            if "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg:
+                logger.warning(f"Advisor API 429 rate limit detected. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
+                if attempt == max_attempts:
+                    raise HTTPException(status_code=429, detail="Daily capacity reached. Please try again later.")
+                await asyncio.sleep(backoff)
+                backoff *= 2.0
+                continue
+            logger.error(f"Advisor API call attempt {attempt} failed: {str(e)}")
+            if attempt == max_attempts:
+                raise HTTPException(status_code=500, detail=f"AI Advisor service error: {str(e)}")
+            await asyncio.sleep(1.0)
+
+    # Save messages to database
+    db.save_advisor_messages(run_id, request.new_message, response_text)
+
+    return {"text": response_text}
 
 
 @router.websocket("/{run_id}/stream")

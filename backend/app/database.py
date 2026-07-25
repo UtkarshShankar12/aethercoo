@@ -3,7 +3,7 @@ import json
 import uuid
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -188,6 +188,20 @@ class SQLiteDatabase:
                 (str(uuid.uuid4()), run_id, 'assistant', assistant_content, created_at)
             )
             conn.commit()
+
+    def get_user_run_count_24h(self, user_id: str) -> int:
+        since_iso = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
+        with self._get_connection() as conn:
+            cursor = conn.execute("SELECT COUNT(*) FROM runs WHERE user_id = ? AND created_at >= ?", (user_id, since_iso))
+            return cursor.fetchone()[0]
+
+    def get_global_request_count_24h(self) -> int:
+        since_iso = (datetime.utcnow() - timedelta(hours=24)).isoformat() + "Z"
+        with self._get_connection() as conn:
+            c1 = conn.execute("SELECT COUNT(*) FROM run_agent_outputs WHERE created_at >= ?", (since_iso,)).fetchone()[0]
+            c2 = conn.execute("SELECT COUNT(*) FROM run_dashboard WHERE created_at >= ?", (since_iso,)).fetchone()[0]
+            c3 = conn.execute("SELECT COUNT(*) FROM advisor_messages WHERE role = 'assistant' AND created_at >= ?", (since_iso,)).fetchone()[0]
+            return c1 + c2 + c3
 
 db_instance = SQLiteDatabase()
 

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY")
+    gemini_api_key: str = Field(alias="GEMINI_API_KEY")
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
     supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
     

@@ -4,7 +4,8 @@ import asyncio
 from datetime import datetime
 from typing import Callable, Awaitable, Type, TypeVar, Tuple, Optional
 from pydantic import BaseModel
-from anthropic import Anthropic
+import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
 
 from app.config import settings
 from app.schemas import (
@@ -21,120 +22,97 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar('T', bound=BaseModel)
 
-# Cost calculation variables (per token)
-SONNET_INPUT_COST = 3.0 / 1_000_000
-SONNET_OUTPUT_COST = 15.0 / 1_000_000
+# Configure Gemini
+genai.configure(api_key=settings.gemini_api_key)
 
-HAIKU_INPUT_COST = 0.8 / 1_000_000
-HAIKU_OUTPUT_COST = 4.0 / 1_000_000
+# Global rate limit spacing variables
+last_api_call_time = 0.0
+api_call_lock = asyncio.Lock()
 
-# Client initialization
-anthropic_client = Anthropic(api_key=settings.anthropic_api_key)
+async def spacing_delay():
+    global last_api_call_time
+    async with api_call_lock:
+        now = asyncio.get_event_loop().time()
+        elapsed = now - last_api_call_time
+        # Space calls by at least 4.1 seconds to avoid exceeding 15 req/min
+        spacing = 4.1
+        if elapsed < spacing:
+            sleep_duration = spacing - elapsed
+            logger.info(f"Rate limiter: sleeping for {sleep_duration:.2f}s to space API calls...")
+            await asyncio.sleep(sleep_duration)
+        last_api_call_time = asyncio.get_event_loop().time()
 
 async def call_agent_structured(
     model: str,
     system_prompt: str,
     user_prompt: str,
-    output_schema: Type[T],
-    tool_name: str = "submit_report"
+    output_schema: Type[T]
 ) -> Tuple[T, int, int, float]:
     """
-    Calls Anthropic Claude API forcing a tool use block matching the target Pydantic schema.
+    Calls Google Gemini API forcing a JSON output matching the target Pydantic schema.
+    Applies exponential backoff on 429 and global request spacing.
     Returns (parsed_pydantic_model, input_tokens, output_tokens, estimated_cost)
     """
-    schema_dict = output_schema.model_json_schema()
+    # Enforce global spacing delay
+    await spacing_delay()
+
+    gemini_model_name = "gemini-1.5-flash"
+    model_instance = genai.GenerativeModel(
+        model_name=gemini_model_name,
+        system_instruction=system_prompt
+    )
+
+    config = genai.types.GenerationConfig(
+        response_mime_type="application/json",
+        response_schema=output_schema
+    )
+
+    max_attempts = 3
+    backoff = 1.0  # starts at 1s
     
-    # We do the call in an executor to avoid blocking the async loop
-    def _do_call(prompt_text: str):
-        return anthropic_client.messages.create(
-            model=model,
-            max_tokens=4000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": prompt_text}],
-            tools=[
-                {
-                    "name": tool_name,
-                    "description": f"Submit output for {output_schema.__name__}",
-                    "input_schema": schema_dict
-                }
-            ],
-            tool_choice={"type": "tool", "name": tool_name}
-        )
-
-    # First attempt
-    try:
-        response = await asyncio.to_thread(_do_call, user_prompt)
-    except Exception as e:
-        logger.error(f"First call attempt failed: {str(e)}")
-        raise e
-
-    # Extract tool call
-    tool_input = None
-    for block in response.content:
-        if block.type == "tool_use" and block.name == tool_name:
-            tool_input = block.input
-            break
-
-    input_tokens = response.usage.input_tokens
-    output_tokens = response.usage.output_tokens
-    
-    # Calculate cost
-    if "sonnet" in model:
-        cost = (input_tokens * SONNET_INPUT_COST) + (output_tokens * SONNET_OUTPUT_COST)
-    else:
-        cost = (input_tokens * HAIKU_INPUT_COST) + (output_tokens * HAIKU_OUTPUT_COST)
-
-    if not tool_input:
-        # If no tool input returned, trigger repair prompt retry
-        logger.warning("No tool input returned. Attempting repair retry.")
-        repair_prompt = f"{user_prompt}\n\n[SYSTEM ERROR] Your previous response did not trigger the required tool '{tool_name}'. Please correct this and output parameters matching the tool schema."
-        response_retry = await asyncio.to_thread(_do_call, repair_prompt)
-        
-        tool_input_retry = None
-        for block in response_retry.content:
-            if block.type == "tool_use" and block.name == tool_name:
-                tool_input_retry = block.input
-                break
+    for attempt in range(1, max_attempts + 1):
+        try:
+            def _do_call():
+                return model_instance.generate_content(
+                    contents=user_prompt,
+                    generation_config=config
+                )
+            
+            response = await asyncio.to_thread(_do_call)
+            
+            # Extract usage metadata
+            input_tokens = 0
+            output_tokens = 0
+            if response.usage_metadata:
+                input_tokens = response.usage_metadata.prompt_token_count
+                output_tokens = response.usage_metadata.candidates_token_count
                 
-        input_tokens += response_retry.usage.input_tokens
-        output_tokens += response_retry.usage.output_tokens
-        if "sonnet" in model:
-            cost += (response_retry.usage.input_tokens * SONNET_INPUT_COST) + (response_retry.usage.output_tokens * SONNET_OUTPUT_COST)
-        else:
-            cost += (response_retry.usage.input_tokens * HAIKU_INPUT_COST) + (response_retry.usage.output_tokens * HAIKU_OUTPUT_COST)
-            
-        if not tool_input_retry:
-            raise ValueError("Claude failed to use the required structured tool even after a repair retry.")
-        tool_input = tool_input_retry
+            text_out = response.text
+            # Validate and parse Pydantic schema
+            parsed = output_schema.model_validate_json(text_out)
+            return parsed, input_tokens, output_tokens, 0.0
 
-    # Try validating Pydantic model
-    try:
-        parsed = output_schema.model_validate(tool_input)
-        return parsed, input_tokens, output_tokens, cost
-    except Exception as validation_err:
-        logger.warning(f"Validation failed on first attempt: {str(validation_err)}. Attempting repair retry.")
-        # Retry with validation error feedback
-        repair_prompt = f"{user_prompt}\n\n[SYSTEM ERROR] Your output failed schema validation: {str(validation_err)}. Please correct the fields and resubmit via the tool."
-        response_retry = await asyncio.to_thread(_do_call, repair_prompt)
-        
-        tool_input_retry = None
-        for block in response_retry.content:
-            if block.type == "tool_use" and block.name == tool_name:
-                tool_input_retry = block.input
-                break
+        except google_exceptions.ResourceExhausted as rate_err:
+            logger.warning(f"Gemini API 429 rate limit exceeded. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
+            if attempt == max_attempts:
+                raise rate_err
+            await asyncio.sleep(backoff)
+            backoff *= 2.0
+            
+        except Exception as err:
+            err_msg = str(err).lower()
+            if "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg:
+                logger.warning(f"Gemini API 429 rate limit detected. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
+                if attempt == max_attempts:
+                    raise err
+                await asyncio.sleep(backoff)
+                backoff *= 2.0
+                continue
                 
-        input_tokens += response_retry.usage.input_tokens
-        output_tokens += response_retry.usage.output_tokens
-        if "sonnet" in model:
-            cost += (response_retry.usage.input_tokens * SONNET_INPUT_COST) + (response_retry.usage.output_tokens * SONNET_OUTPUT_COST)
-        else:
-            cost += (response_retry.usage.input_tokens * HAIKU_INPUT_COST) + (response_retry.usage.output_tokens * HAIKU_OUTPUT_COST)
-            
-        if not tool_input_retry:
-            raise ValueError(f"Repair retry failed to invoke tool. Original error: {str(validation_err)}")
-            
-        parsed = output_schema.model_validate(tool_input_retry)
-        return parsed, input_tokens, output_tokens, cost
+            logger.warning(f"Attempt {attempt} failed with error: {str(err)}. Retrying in 1s...")
+            if attempt == max_attempts:
+                raise err
+            await asyncio.sleep(1.0)
 
 
 # Consolidator logic to assemble final schemas

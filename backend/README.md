@@ -1,6 +1,6 @@
 # AetherCOO API Backend
 
-Production-ready sequential multi-agent AI execution engine built with FastAPI, local SQLite database, and the Anthropic Claude API.
+Production-ready sequential multi-agent AI execution engine built with FastAPI, local SQLite database, and the Google Gemini API.
 
 ---
 
@@ -8,7 +8,7 @@ Production-ready sequential multi-agent AI execution engine built with FastAPI, 
 
 AetherCOO translates user startup ideas into unified execution dashboards. It coordinates 4 virtual executive agents:
 1. **CEO Agent:** Analyzes idea scope, target demographics, value prop, and sets the baseline profile.
-2. **Research Agent:** Performs competitor scanning and a brutally honest SWOT analysis using Claude Haiku.
+2. **Research Agent:** Performs competitor scanning and a brutally honest SWOT analysis using Gemini Flash.
 3. **Finance Agent:** Computes INR pricing metrics, payback period, gross margins, and forecasts a cumulative 12-month projection sheet.
 4. **QA Risk Agent:** Audits compliance, details high/medium risk categories, outlines realistic mitigations, and scores overall viability.
 
@@ -21,15 +21,26 @@ A final **Consolidator** pass merges the agent reports and writes the custom mon
 Create a `.env` file in the `backend` directory matching the keys in [.env.example](.env.example):
 
 ```bash
-# Anthropic Claude API Credentials
-ANTHROPIC_API_KEY=your-anthropic-api-key-here
+# Google Gemini API Credentials
+GEMINI_API_KEY=your-gemini-api-key-here
 
 # Application Settings
 CORS_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"]
 HOST=0.0.0.0
 PORT=8000
 ```
-*(Supabase configurations are no longer required, as everything operates via local SQLite).*
+> [!WARNING]
+> Do NOT enable billing on the Google Cloud project this API key belongs to. Doing so permanently removes the free tier, converting all requests to paid tier usage. Keep it on the default free tier.
+
+---
+
+## Free-Tier Guardrails
+
+Because the Gemini free tier has tight rate limits (~1,500 requests/day, 15 requests/minute), the backend enforces several guardrails:
+* **Global Capacity Cap:** Rejects new runs or boardroom advisor queries if the system exceeds 1,200 API calls globally within a 24-hour window (80% of daily quota), returning a clean "daily capacity reached" message.
+* **Per-User daily run cap:** Caps individual user IDs at 10 runs per day.
+* **Request Spacing Limiter:** Automatically spaces all global API requests by at least 4.1 seconds, preventing concurrent runs from collectively triggering 429 Rate Limit responses.
+* **Exponential Backoff:** Retries API calls automatically (1s, 2s, 4s, up to 3 attempts) if rate limit exhaustion errors are encountered.
 
 ---
 
