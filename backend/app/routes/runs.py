@@ -53,6 +53,11 @@ async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
     """
     Submits a business idea. Enforces SQLite capacity metrics, daily caps, and hourly limits.
     """
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="GEMINI_API_KEY is not configured on the server. Please add GEMINI_API_KEY to your environment/Vercel settings."
+        )
     db = get_db()
     
     # 1. Global Capacity Cap Check (80% of 1,500 daily requests = 1,200 requests)
@@ -231,6 +236,11 @@ async def ask_advisor(run_id: str, request: AdvisorRequest):
     """
     Boardroom advisor conversation endpoint. Grounded in the run's compiled SQLite context.
     """
+    if not settings.gemini_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="GEMINI_API_KEY is not configured on the server. Please add GEMINI_API_KEY to your environment/Vercel settings."
+        )
     db = get_db()
     
     # 1. Global Capacity Cap Check (80% of 1,500 daily requests = 1,200 requests)

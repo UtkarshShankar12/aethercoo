@@ -20,8 +20,8 @@ export default function App() {
   const [reportData, setReportData] = useState(null);
   const [historyList, setHistoryList] = useState([]);
 
-  const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const WS_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
+  const BACKEND_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : window.location.origin);
+  const WS_URL = import.meta.env.VITE_WS_URL || (import.meta.env.DEV ? "ws://localhost:8000" : window.location.origin.replace(/^http/, 'ws'));
 
   // Persistent User ID generation for anonymous Supabase referencing
   const getUserId = () => {
@@ -99,85 +99,174 @@ export default function App() {
       });
 
       if (!resp.ok) {
-        const errJson = await resp.json();
-        throw new Error(errJson.detail || "Failed to start validation run.");
+        let errMsg = "Failed to start validation run.";
+        try {
+          const errJson = await resp.json();
+          errMsg = errJson.detail || errMsg;
+        } catch (parseErr) {
+          try {
+            const rawText = await resp.text();
+            if (rawText && rawText.length < 200) errMsg = rawText;
+          } catch (e) {}
+        }
+        throw new Error(errMsg);
       }
 
       const { run_id } = await resp.json();
 
-      // Connect to websocket stream
-      const ws = new WebSocket(`${WS_URL}/api/runs/${run_id}/stream`);
+      // Connect to websocket stream with live polling fallback
+      let ws = null;
+      let isCompleted = false;
+      let pollInterval = null;
 
-      ws.onmessage = (event) => {
-        const message = JSON.parse(event.data);
-
-        if (message.type === 'log') {
-          const msgAgent = message.agent.toLowerCase();
-          setActiveAgent(msgAgent);
-          
-          setAgentStates(prev => {
-            const nextStates = { ...prev };
-            if (msgAgent === 'ceo') {
-              nextStates.ceo = 'working';
-            } else if (msgAgent === 'research') {
-              nextStates.ceo = 'done';
-              nextStates.research = 'working';
-            } else if (msgAgent === 'finance') {
-              nextStates.ceo = 'done';
-              nextStates.research = 'done';
-              nextStates.finance = 'working';
-            } else if (msgAgent === 'qa') {
-              nextStates.ceo = 'done';
-              nextStates.research = 'done';
-              nextStates.finance = 'done';
-              nextStates.qa = 'working';
+      const startPolling = () => {
+        if (pollInterval || isCompleted) return;
+        addLog("System", "WebSocket stream offline. Switching to live polling...");
+        
+        pollInterval = setInterval(async () => {
+          try {
+            const checkResp = await fetch(`${BACKEND_URL}/api/runs/${run_id}`);
+            if (!checkResp.ok) return;
+            const data = await checkResp.json();
+            
+            if (data.status === 'completed') {
+              isCompleted = true;
+              clearInterval(pollInterval);
+              setAgentStates({
+                ceo: 'done',
+                research: 'done',
+                finance: 'done',
+                qa: 'done'
+              });
+              setActiveAgent(null);
+              setProgress(100);
+              setReportData(data);
+              refreshHistory();
+              setTimeout(() => {
+                setScreen('report');
+              }, 1200);
+            } else if (data.status === 'failed') {
+              clearInterval(pollInterval);
+              addLog("System", "❌ Optimization run failed.");
+              alert("Validation run failed. Please check backend capacity/logs.");
+              setScreen('landing');
+            } else {
+              const currentStatus = data.status;
+              let active = null;
+              let progressVal = 10;
+              
+              if (currentStatus === 'ceo_working') {
+                active = 'ceo';
+                progressVal = 20;
+                setAgentStates({ ceo: 'working', research: 'idle', finance: 'idle', qa: 'idle' });
+              } else if (currentStatus === 'research_working') {
+                active = 'research';
+                progressVal = 45;
+                setAgentStates({ ceo: 'done', research: 'working', finance: 'idle', qa: 'idle' });
+              } else if (currentStatus === 'finance_working') {
+                active = 'finance';
+                progressVal = 70;
+                setAgentStates({ ceo: 'done', research: 'done', finance: 'working', qa: 'idle' });
+              } else if (currentStatus === 'qa_working') {
+                active = 'qa';
+                progressVal = 88;
+                setAgentStates({ ceo: 'done', research: 'done', finance: 'done', qa: 'working' });
+              }
+              
+              setActiveAgent(active);
+              setProgress(progressVal);
+              addLog(active ? active.toUpperCase() : "System", `Agent status update: ${currentStatus.replace('_', ' ')}...`);
             }
-            return nextStates;
-          });
-
-          addLog(message.agent, message.message);
-          if (message.progress !== undefined) {
-            setProgress(message.progress);
+          } catch (err) {
+            console.error("Polling error:", err);
           }
-        } 
+        }, 3000);
+      };
+
+      try {
+        ws = new WebSocket(`${WS_URL}/api/runs/${run_id}/stream`);
         
-        else if (message.type === 'completed') {
-          setAgentStates({
-            ceo: 'done',
-            research: 'done',
-            finance: 'done',
-            qa: 'done'
-          });
-          setActiveAgent(null);
-          setProgress(100);
+        ws.onmessage = (event) => {
+          const message = JSON.parse(event.data);
 
-          setReportData(message.dashboard);
-          refreshHistory();
+          if (message.type === 'log') {
+            const msgAgent = message.agent.toLowerCase();
+            setActiveAgent(msgAgent);
+            
+            setAgentStates(prev => {
+              const nextStates = { ...prev };
+              if (msgAgent === 'ceo') {
+                nextStates.ceo = 'working';
+              } else if (msgAgent === 'research') {
+                nextStates.ceo = 'done';
+                nextStates.research = 'working';
+              } else if (msgAgent === 'finance') {
+                nextStates.ceo = 'done';
+                nextStates.research = 'done';
+                nextStates.finance = 'working';
+              } else if (msgAgent === 'qa') {
+                nextStates.ceo = 'done';
+                nextStates.research = 'done';
+                nextStates.finance = 'done';
+                nextStates.qa = 'working';
+              }
+              return nextStates;
+            });
 
-          setTimeout(() => {
-            setScreen('report');
-          }, 1200);
+            addLog(message.agent, message.message);
+            if (message.progress !== undefined) {
+              setProgress(message.progress);
+            }
+          } 
+          else if (message.type === 'completed') {
+            isCompleted = true;
+            if (pollInterval) clearInterval(pollInterval);
+            setAgentStates({
+              ceo: 'done',
+              research: 'done',
+              finance: 'done',
+              qa: 'done'
+            });
+            setActiveAgent(null);
+            setProgress(100);
 
-          ws.close();
-        } 
-        
-        else if (message.type === 'failed') {
-          addLog('SYSTEM', `❌ Agent Execution Failed: ${message.error}`);
-          alert(`Execution failed: ${message.error}`);
-          setScreen('landing');
-          ws.close();
-        }
-      };
+            setReportData(message.dashboard);
+            refreshHistory();
 
-      ws.onerror = (err) => {
-        console.error("WebSocket connection error:", err);
-      };
+            setTimeout(() => {
+              setScreen('report');
+            }, 1200);
 
-      ws.onclose = () => {
-        console.info("WebSocket connection closed");
-      };
+            ws.close();
+          } 
+          else if (message.type === 'failed') {
+            isCompleted = true;
+            if (pollInterval) clearInterval(pollInterval);
+            addLog('SYSTEM', `❌ Agent Execution Failed: ${message.error}`);
+            alert(`Execution failed: ${message.error}`);
+            setScreen('landing');
+            ws.close();
+          }
+        };
 
-      window._activeWebSocket = ws;
+        ws.onerror = (err) => {
+          console.warn("WebSocket error, switching to polling:", err);
+          startPolling();
+        };
+
+        ws.onclose = () => {
+          if (!isCompleted) {
+            console.warn("WebSocket closed prematurely, switching to polling...");
+            startPolling();
+          }
+        };
+
+        window._activeWebSocket = ws;
+
+      } catch (err) {
+        console.warn("WebSocket instantiation failed, falling back to polling:", err);
+        startPolling();
+      }
 
     } catch (e) {
       alert(e.message);

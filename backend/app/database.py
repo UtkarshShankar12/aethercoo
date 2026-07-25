@@ -9,7 +9,10 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 class SQLiteDatabase:
-    def __init__(self, db_path="aethercoo.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            is_vercel = os.environ.get("VERCEL") == "1"
+            db_path = "/tmp/aethercoo.db" if is_vercel else "aethercoo.db"
         self.db_path = db_path
         self._init_db()
 
