@@ -56,7 +56,7 @@ async def call_agent_structured(
     # Enforce global spacing delay
     await spacing_delay()
 
-    gemini_model_name = "gemini-1.5-flash"
+    gemini_model_name = "gemini-2.5-flash"
     model_instance = genai.GenerativeModel(
         model_name=gemini_model_name,
         system_instruction=system_prompt

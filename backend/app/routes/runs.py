@@ -303,7 +303,7 @@ Reference the specific calculated costs (INR/₹), competitor names, SWOT elemen
 
     # Execute Gemini Call with exponential backoff on 429
     model_instance = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=system_prompt
     )
 
