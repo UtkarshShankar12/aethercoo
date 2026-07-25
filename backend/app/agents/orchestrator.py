@@ -43,10 +43,13 @@ async def spacing_delay():
         last_api_call_time = asyncio.get_event_loop().time()
 
 def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
-    if isinstance(schema, dict):
-        if defs is None:
+    if defs is None:
+        if isinstance(schema, dict):
             defs = schema.get("$defs", schema.get("definitions", {}))
-        
+            # Remove $defs from the root schema so Gemini doesn't get confused
+            schema = {k: v for k, v in schema.items() if k not in ("$defs", "definitions")}
+            
+    if isinstance(schema, dict):
         # Collapse allOf if present
         if "allOf" in schema:
             collapsed = {}
@@ -56,7 +59,7 @@ def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
                     collapsed.update(resolved_sub)
             for k, v in schema.items():
                 if k != "allOf":
-                    collapsed[k] = v
+                    collapsed[k] = resolve_schema_refs(v, defs)
             schema = collapsed
 
         # Resolve $ref if present
@@ -68,16 +71,11 @@ def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
             for k, v in schema.items():
                 if k != "$ref":
                     if isinstance(resolved, dict):
-                        resolved[k] = v
+                        resolved[k] = resolve_schema_refs(v, defs)
             return resolved
 
-        # Filter and recurse on nested keys
-        resolved_dict = {}
-        allowed_keys = {"type", "properties", "items", "required", "description", "enum"}
-        for k, v in schema.items():
-            if k in allowed_keys:
-                resolved_dict[k] = resolve_schema_refs(v, defs)
-        return resolved_dict
+        # Recursively process all dictionary keys
+        return {k: resolve_schema_refs(v, defs) for k, v in schema.items()}
 
     elif isinstance(schema, list):
         return [resolve_schema_refs(item, defs) for item in schema]
