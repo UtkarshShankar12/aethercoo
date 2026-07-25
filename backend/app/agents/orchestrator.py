@@ -46,8 +46,6 @@ def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
     if defs is None:
         if isinstance(schema, dict):
             defs = schema.get("$defs", schema.get("definitions", {}))
-            # Remove $defs from the root schema so Gemini doesn't get confused
-            schema = {k: v for k, v in schema.items() if k not in ("$defs", "definitions")}
             
     if isinstance(schema, dict):
         # Collapse allOf if present
@@ -74,8 +72,16 @@ def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
                         resolved[k] = resolve_schema_refs(v, defs)
             return resolved
 
-        # Recursively process all dictionary keys
-        return {k: resolve_schema_refs(v, defs) for k, v in schema.items()}
+        # Filter schema keys to only standard Gemini-supported fields
+        clean_schema = {}
+        allowed_keys = {"type", "properties", "items", "required", "description", "enum"}
+        for k, v in schema.items():
+            if k in allowed_keys:
+                if k == "properties" and isinstance(v, dict):
+                    clean_schema[k] = {prop_name: resolve_schema_refs(prop_schema, defs) for prop_name, prop_schema in v.items()}
+                else:
+                    clean_schema[k] = resolve_schema_refs(v, defs)
+        return clean_schema
 
     elif isinstance(schema, list):
         return [resolve_schema_refs(item, defs) for item in schema]
