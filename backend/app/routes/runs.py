@@ -413,3 +413,27 @@ async def websocket_stream(websocket: WebSocket, run_id: str):
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}")
         manager.disconnect(run_id, websocket)
+
+
+@router.get("/diag/check")
+async def diag_check():
+    """
+    Diagnostic route to check if GEMINI_API_KEY is configured and listing available models.
+    """
+    if not settings.gemini_api_key:
+        return {"status": "error", "message": "GEMINI_API_KEY environment variable is missing on Vercel."}
+    try:
+        # Enforce configuration
+        genai.configure(api_key=settings.gemini_api_key)
+        models = [m.name for m in genai.list_models()]
+        return {
+            "status": "success",
+            "message": "GEMINI_API_KEY is configured and valid.",
+            "available_models": models
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list models with key: {str(e)}",
+            "tip": "Make sure your API key has the 'Generative Language API' enabled. Creating a key from Google AI Studio (aistudio.google.com) handles this automatically."
+        }
