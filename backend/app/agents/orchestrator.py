@@ -2,7 +2,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime
-from typing import Callable, Awaitable, Type, TypeVar, Tuple, Optional
+from typing import Callable, Awaitable, Type, TypeVar, Tuple, Optional, Any
 from pydantic import BaseModel
 import google.generativeai as genai
 from google.api_core import exceptions as google_exceptions
