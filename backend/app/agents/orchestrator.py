@@ -42,6 +42,49 @@ async def spacing_delay():
             await asyncio.sleep(sleep_duration)
         last_api_call_time = asyncio.get_event_loop().time()
 
+def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
+    if isinstance(schema, dict):
+        if defs is None:
+            defs = schema.get("$defs", schema.get("definitions", {}))
+        
+        # Collapse allOf if present
+        if "allOf" in schema:
+            collapsed = {}
+            for sub in schema["allOf"]:
+                resolved_sub = resolve_schema_refs(sub, defs)
+                if isinstance(resolved_sub, dict):
+                    collapsed.update(resolved_sub)
+            for k, v in schema.items():
+                if k != "allOf":
+                    collapsed[k] = v
+            schema = collapsed
+
+        # Resolve $ref if present
+        if "$ref" in schema:
+            ref_path = schema["$ref"]
+            ref_name = ref_path.split("/")[-1]
+            resolved = defs.get(ref_name, {})
+            resolved = resolve_schema_refs(resolved, defs)
+            for k, v in schema.items():
+                if k != "$ref":
+                    if isinstance(resolved, dict):
+                        resolved[k] = v
+            return resolved
+
+        # Filter and recurse on nested keys
+        resolved_dict = {}
+        allowed_keys = {"type", "properties", "items", "required", "description", "enum"}
+        for k, v in schema.items():
+            if k in allowed_keys:
+                resolved_dict[k] = resolve_schema_refs(v, defs)
+        return resolved_dict
+
+    elif isinstance(schema, list):
+        return [resolve_schema_refs(item, defs) for item in schema]
+
+    return schema
+
+
 async def call_agent_structured(
     model: str,
     system_prompt: str,
@@ -62,9 +105,13 @@ async def call_agent_structured(
         system_instruction=system_prompt
     )
 
+    # Generate schema from Pydantic and resolve refs/allOf
+    raw_schema = output_schema.model_json_schema()
+    clean_schema = resolve_schema_refs(raw_schema)
+
     config = genai.types.GenerationConfig(
         response_mime_type="application/json",
-        response_schema=output_schema
+        response_schema=clean_schema
     )
 
     max_attempts = 3
