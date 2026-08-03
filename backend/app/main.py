@@ -2,8 +2,7 @@ import sys
 import os
 import logging
 import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, Response
 from dotenv import load_dotenv
 
 # Ensure the 'backend' directory is on PYTHONPATH for Vercel serverless imports
@@ -28,14 +27,47 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Setup CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Setup Dynamic CORS Middleware
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    origin = request.headers.get("origin")
+    
+    if request.method == "OPTIONS":
+        response = Response()
+        if origin:
+            allowed = False
+            if origin in settings.cors_origins_list:
+                allowed = True
+            elif origin.endswith(".amplifyapp.com") or origin.endswith(".vercel.app"):
+                allowed = True
+            elif "localhost" in origin or "127.0.0.1" in origin:
+                allowed = True
+                
+            if allowed:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                response.headers["Access-Control-Allow-Credentials"] = "true"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+        return response
+
+    response = await call_next(request)
+    
+    if origin:
+        allowed = False
+        if origin in settings.cors_origins_list:
+            allowed = True
+        elif origin.endswith(".amplifyapp.com") or origin.endswith(".vercel.app"):
+            allowed = True
+        elif "localhost" in origin or "127.0.0.1" in origin:
+            allowed = True
+            
+        if allowed:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
+            
+    return response
 
 # Include routers
 app.include_router(runs_router)
