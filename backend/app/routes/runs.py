@@ -301,42 +301,39 @@ Reference the specific calculated costs (INR/₹), competitor names, SWOT elemen
         "parts": [request.new_message]
     })
 
-    # Execute Gemini Call with exponential backoff on 429
-    model_instance = genai.GenerativeModel(
-        model_name="gemini-2.5-flash",
-        system_instruction=system_prompt
-    )
+    # Execute Gemini Call with dynamic model rotation fallback
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+    response_text = None
 
-    max_attempts = 3
-    backoff = 1.0
-
-    for attempt in range(1, max_attempts + 1):
+    for attempt, model_name in enumerate(models_to_try, 1):
         try:
+            logger.info(f"Calling Advisor Gemini API using model {model_name} (Attempt {attempt})...")
+            model_instance = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_prompt
+            )
+            
             def _call_gemini():
                 return model_instance.generate_content(contents=gemini_messages)
 
             response = await asyncio.to_thread(_call_gemini)
             response_text = response.text
             break
-        except google_exceptions.ResourceExhausted as rate_err:
-            logger.warning(f"Advisor API 429 rate limit exceeded. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
-            if attempt == max_attempts:
-                raise HTTPException(status_code=429, detail="Daily capacity reached. Please try again later.")
-            await asyncio.sleep(backoff)
-            backoff *= 2.0
         except Exception as e:
             err_msg = str(e).lower()
-            if "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg:
-                logger.warning(f"Advisor API 429 rate limit detected. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
-                if attempt == max_attempts:
+            is_rate_limit = "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg or "quota" in err_msg
+            
+            if is_rate_limit:
+                logger.warning(f"Advisor API rate limit/quota exceeded for {model_name}. Attempt {attempt} of {len(models_to_try)}.")
+                if attempt == len(models_to_try):
                     raise HTTPException(status_code=429, detail="Daily capacity reached. Please try again later.")
-                await asyncio.sleep(backoff)
-                backoff *= 2.0
+                await asyncio.sleep(1.5 * attempt)
                 continue
-            logger.error(f"Advisor API call attempt {attempt} failed: {str(e)}")
-            if attempt == max_attempts:
-                raise HTTPException(status_code=500, detail=f"AI Advisor service error: {str(e)}")
-            await asyncio.sleep(1.0)
+            else:
+                logger.error(f"Advisor API call attempt {attempt} failed with {model_name}: {str(e)}")
+                if attempt == len(models_to_try):
+                    raise HTTPException(status_code=500, detail=f"AI Advisor service error: {str(e)}")
+                await asyncio.sleep(1.0)
 
     # Save messages to database
     db.save_advisor_messages(run_id, request.new_message, response_text)

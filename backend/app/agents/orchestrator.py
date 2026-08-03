@@ -100,15 +100,6 @@ async def call_agent_structured(
     Applies exponential backoff on 429 and global request spacing.
     Returns (parsed_pydantic_model, input_tokens, output_tokens, estimated_cost)
     """
-    # Enforce global spacing delay
-    await spacing_delay()
-
-    gemini_model_name = "gemini-2.5-flash"
-    model_instance = genai.GenerativeModel(
-        model_name=gemini_model_name,
-        system_instruction=system_prompt
-    )
-
     # Generate schema from Pydantic and resolve refs/allOf
     raw_schema = output_schema.model_json_schema()
     clean_schema = resolve_schema_refs(raw_schema)
@@ -118,11 +109,19 @@ async def call_agent_structured(
         response_schema=clean_schema
     )
 
-    max_attempts = 3
-    backoff = 1.0  # starts at 1s
+    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
     
-    for attempt in range(1, max_attempts + 1):
+    for attempt, model_name in enumerate(models_to_try, 1):
+        # Enforce global spacing delay
+        await spacing_delay()
+        
         try:
+            logger.info(f"Calling Gemini API using model {model_name} (Attempt {attempt})...")
+            model_instance = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_prompt
+            )
+            
             def _do_call():
                 return model_instance.generate_content(
                     contents=user_prompt,
@@ -143,27 +142,22 @@ async def call_agent_structured(
             parsed = output_schema.model_validate_json(text_out)
             return parsed, input_tokens, output_tokens, 0.0
 
-        except google_exceptions.ResourceExhausted as rate_err:
-            logger.warning(f"Gemini API 429 rate limit exceeded. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
-            if attempt == max_attempts:
-                raise rate_err
-            await asyncio.sleep(backoff)
-            backoff *= 2.0
-            
-        except Exception as err:
+        except (google_exceptions.ResourceExhausted, Exception) as err:
             err_msg = str(err).lower()
-            if "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg:
-                logger.warning(f"Gemini API 429 rate limit detected. Attempt {attempt} of {max_attempts}. Retrying in {backoff}s...")
-                if attempt == max_attempts:
+            is_rate_limit = "429" in err_msg or "resource_exhausted" in err_msg or "resource exhausted" in err_msg or "quota" in err_msg
+            
+            if is_rate_limit:
+                logger.warning(f"Gemini API rate limit/quota exceeded for {model_name}. Attempt {attempt} of {len(models_to_try)}.")
+                if attempt == len(models_to_try):
                     raise err
-                await asyncio.sleep(backoff)
-                backoff *= 2.0
+                # Backoff delay before trying the next model
+                await asyncio.sleep(1.5 * attempt)
                 continue
-                
-            logger.warning(f"Attempt {attempt} failed with error: {str(err)}. Retrying in 1s...")
-            if attempt == max_attempts:
-                raise err
-            await asyncio.sleep(1.0)
+            else:
+                logger.error(f"Attempt {attempt} with {model_name} failed with error: {str(err)}.")
+                if attempt == len(models_to_try):
+                    raise err
+                await asyncio.sleep(1.0)
 
 
 # Consolidator logic to assemble final schemas
