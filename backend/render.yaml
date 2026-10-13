@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: aethercoo-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: oregon
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false  # Must be set manually in Render dashboard
+      - key: CORS_ORIGINS
+        sync: false  # Set to your Netlify URL, e.g.: ["https://aethercoo.netlify.app"]
+      - key: PORT
+        value: "8000"

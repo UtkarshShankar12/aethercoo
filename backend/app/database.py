@@ -6,15 +6,39 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
+import urllib.request
+import urllib.error
+
 logger = logging.getLogger(__name__)
 
 class SQLiteDatabase:
     def __init__(self, db_path=None):
         if db_path is None:
-            is_vercel = os.environ.get("VERCEL") == "1"
-            db_path = "/tmp/aethercoo.db" if is_vercel else "aethercoo.db"
+            # Priority: explicit env override → Vercel /tmp → local file
+            env_override = os.environ.get("AETHERCOO_DB_PATH")
+            if env_override:
+                db_path = env_override
+            elif os.environ.get("VERCEL") == "1":
+                db_path = "/tmp/aethercoo.db"
+            else:
+                db_path = "aethercoo.db"
         self.db_path = db_path
+        self.dbms_url = os.environ.get("REMOTE_DBMS_URL", "")  # default empty = disabled
         self._init_db()
+
+    def _sync_to_dbms(self, path: str, method: str = "GET", payload: dict = None):
+        if not self.dbms_url:
+            return None
+        try:
+            url = f"{self.dbms_url.rstrip('/')}{path}"
+            data = json.dumps(payload).encode('utf-8') if payload else None
+            req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'}, method=method)
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if resp.status in (200, 201):
+                    return json.loads(resp.read().decode('utf-8'))
+        except Exception as e:
+            logger.warning(f"DBMS Sync to {self.dbms_url} failed: {e}")
+        return None
 
     def _get_connection(self):
         conn = sqlite3.connect(self.db_path)
@@ -106,13 +130,16 @@ class SQLiteDatabase:
                 (run_id, user_id, idea_text, 'pending', created_at)
             )
             conn.commit()
-            return {
-                "id": run_id, 
-                "user_id": user_id, 
-                "idea_text": idea_text, 
-                "status": "pending", 
-                "created_at": created_at
-            }
+        
+        run_data = {
+            "id": run_id, 
+            "user_id": user_id, 
+            "idea_text": idea_text, 
+            "status": "pending", 
+            "created_at": created_at
+        }
+        self._sync_to_dbms("/db/runs", method="POST", payload=run_data)
+        return run_data
 
     def update_run_status(self, run_id: str, status: str, viability_score: float = None):
         with self._get_connection() as conn:

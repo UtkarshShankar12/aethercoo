@@ -7,27 +7,63 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Node
+node_modules/
+dist/
+dist-ssr/
 *.local
+
+# Environment files (NEVER commit secrets)
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Python backend artifacts
+backend/venv/
+backend/aethercoo.db
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
 
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+Thumbs.db
 
-# Python backend files
-backend/venv/
-backend/.env
-backend/aethercoo.db
-**/__pycache__/
-**/*.pyc
+# Deployment platform artifacts (stale)
+.vercel/
+vercel.json
+amplify.yml
+apprunner.yaml
 
-.vercel
+# Large binary files (never commit ISOs, zips, etc.)
+*.iso
+*.zip
+*.tar.gz
+*.tar
+*.rar
+
+# PowerShell VM scripts (not part of app)
+deploy_3tier_vms.ps1
+setup_vms.ps1
+verify_vm_ping.ps1
+backend/deploy.py
+
+# Test artifacts
+.pytest_cache/
+coverage/
+*.coverage
+htmlcov/

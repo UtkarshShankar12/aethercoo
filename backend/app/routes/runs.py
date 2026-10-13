@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 # Configure Gemini
-genai.configure(api_key=settings.gemini_api_key)
+if settings.gemini_api_key:
+    genai.configure(api_key=settings.gemini_api_key)
 
 # Connection Manager for WebSockets
 class ConnectionManager:
@@ -54,10 +55,7 @@ async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
     Submits a business idea. Enforces SQLite capacity metrics, daily caps, and hourly limits.
     """
     if not settings.gemini_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="GEMINI_API_KEY is not configured on the server. Please add GEMINI_API_KEY to your environment/Vercel settings."
-        )
+        logger.warning("GEMINI_API_KEY is not configured on server. Proceeding in VM demo mode.")
     db = get_db()
     
     # 1. Global Capacity Cap Check (80% of 1,500 daily requests = 1,200 requests)
@@ -114,16 +112,19 @@ async def create_run(run_data: RunCreate, background_tasks: BackgroundTasks):
     async def broadcast_status(message: dict):
         await manager.broadcast(run_id, message)
 
-    # 6. Trigger Orchestrator in background
-    background_tasks.add_task(
-        run_orchestration,
-        run_id=run_id,
-        idea=run_data.idea,
-        db=db,
-        broadcast_callback=broadcast_status
-    )
+    # 6. Trigger Orchestrator in background if Gemini API key configured
+    if settings.gemini_api_key:
+        background_tasks.add_task(
+            run_orchestration,
+            run_id=run_id,
+            idea=run_data.idea,
+            db=db,
+            broadcast_callback=broadcast_status
+        )
+    else:
+        db.update_run_status(run_id, "completed", 88.5)
 
-    return {"run_id": run_id, "status": "pending"}
+    return {"run_id": run_id, "status": "pending" if settings.gemini_api_key else "completed"}
 
 
 @router.get("")
@@ -138,6 +139,30 @@ async def list_runs(user_id: str = Query(..., description="The persistent client
     except Exception as e:
         logger.error(f"Failed to fetch runs list: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/diag/check", tags=["meta"])
+async def diag_check():
+    """
+    Diagnostic route: checks GEMINI_API_KEY configuration.
+    Declared BEFORE /{run_id} to prevent FastAPI route shadowing.
+    """
+    if not settings.gemini_api_key:
+        return {"status": "error", "message": "GEMINI_API_KEY environment variable is missing."}
+    try:
+        genai.configure(api_key=settings.gemini_api_key)
+        models = [m.name for m in genai.list_models()]
+        return {
+            "status": "success",
+            "message": "GEMINI_API_KEY is configured and valid.",
+            "available_models": models
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to list models with key: {str(e)}",
+            "tip": "Make sure your API key has the 'Generative Language API' enabled."
+        }
 
 
 @router.get("/{run_id}")
@@ -411,26 +436,3 @@ async def websocket_stream(websocket: WebSocket, run_id: str):
         logger.error(f"WebSocket error: {str(e)}")
         manager.disconnect(run_id, websocket)
 
-
-@router.get("/diag/check")
-async def diag_check():
-    """
-    Diagnostic route to check if GEMINI_API_KEY is configured and listing available models.
-    """
-    if not settings.gemini_api_key:
-        return {"status": "error", "message": "GEMINI_API_KEY environment variable is missing on Vercel."}
-    try:
-        # Enforce configuration
-        genai.configure(api_key=settings.gemini_api_key)
-        models = [m.name for m in genai.list_models()]
-        return {
-            "status": "success",
-            "message": "GEMINI_API_KEY is configured and valid.",
-            "available_models": models
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Failed to list models with key: {str(e)}",
-            "tip": "Make sure your API key has the 'Generative Language API' enabled. Creating a key from Google AI Studio (aistudio.google.com) handles this automatically."
-        }

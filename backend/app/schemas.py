@@ -1,10 +1,20 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Dict, Any, Optional
 
 # --- Input Models ---
 class RunCreate(BaseModel):
-    idea: str
-    user_id: str
+    idea: str = Field(..., min_length=10, max_length=2000, description="The business idea to validate (10–2000 chars).")
+    user_id: str = Field(..., min_length=1, max_length=128, description="Persistent anonymous client UUID.")
+
+    @field_validator("idea", mode="before")
+    @classmethod
+    def strip_idea(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("user_id", mode="before")
+    @classmethod
+    def strip_user_id(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
 
 # --- CEO Agent Output Models ---
 class CEOOutput(BaseModel):

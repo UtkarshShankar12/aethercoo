@@ -1,31 +1,47 @@
 # Use official lightweight Python image
 FROM python:3.11-slim
 
-# Set working directory in container
+# Metadata
+LABEL maintainer="AetherCOO" \
+      description="AetherCOO FastAPI backend"
+
+# Prevent Python from writing .pyc files and enable unbuffered logging
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8000
+
+# Set working directory
 WORKDIR /app
 
-# Set environment variables
-# Prevent Python from writing .pyc files and enable unbuffered logging
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
-
-# Install system dependencies if any are needed
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+# Install minimal system dependencies, then clean up apt cache
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file first to leverage Docker cache
+# Copy requirements first to leverage Docker layer cache
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies (no cache to keep image small)
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
-COPY . .
+# Copy application source
+COPY app/ ./app/
 
-# Expose port
+# Create a non-root user and switch to it (security hardening)
+RUN addgroup --system appgroup \
+    && adduser --system --ingroup appgroup --no-create-home appuser \
+    && chown -R appuser:appgroup /app
+
+USER appuser
+
+# Expose the application port
 EXPOSE 8000
 
-# Start command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Health check for container orchestrators
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+# Start the application
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -90,7 +90,6 @@ def resolve_schema_refs(schema: Any, defs: dict = None) -> Any:
 
 
 async def call_agent_structured(
-    model: str,
     system_prompt: str,
     user_prompt: str,
     output_schema: Type[T]
@@ -230,7 +229,6 @@ async def run_orchestration(
         await send_log("CEO", "Analyzing business structure, target audience, and value proposition...", step_progress=10)
         
         ceo_output, in_t, out_t, cost = await call_agent_structured(
-            model="claude-3-5-sonnet-20240620",
             system_prompt=CEO_SYSTEM_PROMPT,
             user_prompt=get_ceo_user_prompt(idea),
             output_schema=CEOOutput
@@ -252,9 +250,7 @@ async def run_orchestration(
         db.update_run_status(run_id, "research_working")
         await send_log("Research", f"Research Agent active. Mapping competitive landscape for \"{ceo_output.subject}\"...", step_progress=32)
         
-        # Use Claude Haiku for competitor Intel passes as specified in guidelines
         research_output, in_t, out_t, cost = await call_agent_structured(
-            model="claude-3-5-haiku-20241022",
             system_prompt=RESEARCH_SYSTEM_PROMPT,
             user_prompt=get_research_user_prompt(idea, ceo_output),
             output_schema=ResearchOutput
@@ -275,7 +271,6 @@ async def run_orchestration(
         await send_log("Finance", "Finance Agent analyzing unit economics. Setting pricing and modeling CAC vs LTV...", step_progress=60)
 
         finance_output, in_t, out_t, cost = await call_agent_structured(
-            model="claude-3-5-sonnet-20240620",
             system_prompt=FINANCE_SYSTEM_PROMPT,
             user_prompt=get_finance_user_prompt(idea, ceo_output, research_output),
             output_schema=FinanceOutput
@@ -297,7 +292,6 @@ async def run_orchestration(
         qa_failed = False
         try:
             qa_output, in_t, out_t, cost = await call_agent_structured(
-                model="claude-3-5-sonnet-20240620",
                 system_prompt=QA_SYSTEM_PROMPT,
                 user_prompt=get_qa_user_prompt(idea, ceo_output, research_output, finance_output),
                 output_schema=QARiskOutput
@@ -340,7 +334,6 @@ async def run_orchestration(
         await send_log("CEO", "Assembling strategy blueprint and generating operational roadmap...", step_progress=95)
         
         consolidated_output, in_t, out_t, cost = await call_agent_structured(
-            model="claude-3-5-sonnet-20240620",
             system_prompt=CONSOLIDATOR_SYSTEM_PROMPT,
             user_prompt=get_consolidator_user_prompt(idea, ceo_output, research_output, finance_output, qa_output),
             output_schema=RunDashboardOutput
