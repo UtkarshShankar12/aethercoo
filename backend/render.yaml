@@ -6,7 +6,7 @@ services:
     dockerContext: .
     region: oregon
     plan: free
-    healthCheckPath: /health
+    healthCheckPath: /
     envVars:
       - key: GEMINI_API_KEY
         sync: false  # Must be set manually in Render dashboard

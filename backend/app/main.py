@@ -4,6 +4,7 @@ import logging
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 
@@ -65,9 +66,21 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(runs_router)
 
 
+@app.get("/", tags=["meta"])
+async def root():
+    """Root route — confirms the API is live. Useful for quick Render health checks."""
+    return {
+        "status": "online",
+        "service": "AetherCOO API",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
 @app.get("/health", tags=["meta"])
 async def health_check():
-    """Liveness probe endpoint for deployment health checks."""
+    """Liveness probe for Render / container orchestrator health checks."""
     return {"status": "healthy", "service": "AetherCOO API", "version": "1.0.0"}
 
 
