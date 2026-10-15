@@ -1,5 +1,6 @@
-# Use official lightweight Python image
-FROM python:3.11-slim
+# Use official lightweight Python image (override with ECR Public mirror to avoid Docker Hub rate limits)
+ARG BASE_IMAGE=python:3.11-slim
+FROM ${BASE_IMAGE}
 
 # Metadata
 LABEL maintainer="AetherCOO" \

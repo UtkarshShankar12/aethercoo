@@ -1,0 +1,75 @@
+{
+    "executionRoleArn":  "arn:aws:iam::724413959665:role/aethercoo-ecs-execution-role",
+    "networkMode":  "awsvpc",
+    "cpu":  "512",
+    "requiresCompatibilities":  [
+                                    "FARGATE"
+                                ],
+    "containerDefinitions":  [
+                                 {
+                                     "name":  "aethercoo-backend",
+                                     "image":  "724413959665.dkr.ecr.us-east-1.amazonaws.com/aethercoo:latest",
+                                     "cpu":  0,
+                                     "portMappings":  [
+                                                          {
+                                                              "containerPort":  8000,
+                                                              "hostPort":  8000,
+                                                              "protocol":  "tcp"
+                                                          }
+                                                      ],
+                                     "essential":  true,
+                                     "environment":  [
+                                                         {
+                                                             "name":  "PORT",
+                                                             "value":  "8000"
+                                                         },
+                                                         {
+                                                             "name":  "PYTHONUNBUFFERED",
+                                                             "value":  "1"
+                                                         },
+                                                         {
+                                                             "value":  "[\"http://localhost:5173\",\"http://127.0.0.1:5173\",\"http://aethercoo-frontend-724413959665.s3-website-us-east-1.amazonaws.com\",\"http://aethercoo-alb-1943562157.us-east-1.elb.amazonaws.com\"]",
+                                                             "name":  "CORS_ORIGINS"
+                                                         }
+                                                     ],
+                                     "mountPoints":  [
+
+                                                     ],
+                                     "volumesFrom":  [
+
+                                                     ],
+                                     "secrets":  [
+                                                     {
+                                                         "name":  "GEMINI_API_KEY",
+                                                         "valueFrom":  "arn:aws:secretsmanager:us-east-1:724413959665:secret:aethercoo/gemini-eyg2q2"
+                                                     }
+                                                 ],
+                                     "user":  "appuser",
+                                     "readonlyRootFilesystem":  false,
+                                     "logConfiguration":  {
+                                                              "logDriver":  "awslogs",
+                                                              "options":  {
+                                                                              "awslogs-group":  "/ecs/aethercoo-backend",
+                                                                              "awslogs-region":  "us-east-1",
+                                                                              "awslogs-stream-prefix":  "ecs"
+                                                                          }
+                                                          },
+                                     "healthCheck":  {
+                                                         "command":  [
+                                                                         "CMD-SHELL",
+                                                                         "python -c \"import urllib.request; urllib.request.urlopen(\u0027http://localhost:8000/health\u0027)\" || exit 1"
+                                                                     ],
+                                                         "interval":  30,
+                                                         "timeout":  5,
+                                                         "retries":  3,
+                                                         "startPeriod":  30
+                                                     },
+                                     "systemControls":  [
+
+                                                        ]
+                                 }
+                             ],
+    "family":  "aethercoo-backend",
+    "taskRoleArn":  "arn:aws:iam::724413959665:role/aethercoo-ecs-task-role",
+    "memory":  "1024"
+}

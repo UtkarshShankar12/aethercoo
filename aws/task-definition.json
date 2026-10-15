@@ -1,0 +1,50 @@
+{
+  "family": "aethercoo-backend",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::724413959665:role/aethercoo-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::724413959665:role/aethercoo-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "aethercoo-backend",
+      "image": "724413959665.dkr.ecr.us-east-1.amazonaws.com/aethercoo:latest",
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "environment": [
+        { "name": "PORT", "value": "8000" },
+        { "name": "PYTHONUNBUFFERED", "value": "1" },
+        { "name": "CORS_ORIGINS", "value": "[\"PLACEHOLDER_CLOUDFRONT_URL\"]" }
+      ],
+      "secrets": [
+        {
+          "name": "GEMINI_API_KEY",
+          "valueFrom": "arn:aws:secretsmanager:us-east-1:724413959665:secret:aethercoo/gemini-eyg2q2:GEMINI_API_KEY::"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/aethercoo-backend",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 30
+      },
+      "readonlyRootFilesystem": false,
+      "user": "appuser"
+    }
+  ]
+}

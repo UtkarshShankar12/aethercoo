@@ -1,0 +1,16 @@
+﻿version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR
+      - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 724413959665.dkr.ecr.us-east-1.amazonaws.com
+  build:
+    commands:
+      - echo Building Docker image
+      - docker build -t aethercoo backend/
+      - docker tag aethercoo:latest 724413959665.dkr.ecr.us-east-1.amazonaws.com/aethercoo:latest
+  post_build:
+    commands:
+      - echo Pushing image to ECR
+      - docker push 724413959665.dkr.ecr.us-east-1.amazonaws.com/aethercoo:latest
+      - echo Build completed

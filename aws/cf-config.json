@@ -1,0 +1,34 @@
+﻿{
+  "CallerReference": "aethercoo-20261013235834",
+  "Comment": "AetherCOO frontend CDN",
+  "DefaultRootObject": "index.html",
+  "Origins": {
+    "Quantity": 1,
+    "Items": [{
+      "Id": "s3-aethercoo",
+      "DomainName": "aethercoo-frontend-724413959665.s3.us-east-1.amazonaws.com",
+      "OriginAccessControlId": "EFUNAYXVSW5JL",
+      "S3OriginConfig": {"OriginAccessIdentity": ""}
+    }]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "s3-aethercoo",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "AllowedMethods": {"Quantity": 2, "Items": ["GET","HEAD"], "CachedMethods": {"Quantity": 2, "Items": ["GET","HEAD"]}},
+    "ForwardedValues": {"QueryString": false, "Cookies": {"Forward": "none"}},
+    "MinTTL": 0, "DefaultTTL": 86400, "MaxTTL": 31536000,
+    "Compress": true
+  },
+  "CustomErrorResponses": {
+    "Quantity": 1,
+    "Items": [{
+      "ErrorCode": 403,
+      "ResponsePagePath": "/index.html",
+      "ResponseCode": "200",
+      "ErrorCachingMinTTL": 10
+    }]
+  },
+  "HttpVersion": "http2",
+  "Enabled": true,
+  "PriceClass": "PriceClass_200"
+}

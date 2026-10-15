@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
     
     # We parse the string JSON if it's a string, or default
-    cors_origins: str = Field(default='["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174"]', alias="CORS_ORIGINS")
+    cors_origins: str = Field(
+        default='["http://localhost:5173","http://127.0.0.1:5173","http://localhost:5174","http://aethercoo-frontend-724413959665.s3-website-us-east-1.amazonaws.com","http://aethercoo-alb-1943562157.us-east-1.elb.amazonaws.com"]',
+        alias="CORS_ORIGINS"
+    )
 
     @property
     def cors_origins_list(self) -> List[str]:

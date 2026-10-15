@@ -1,0 +1,20 @@
+{
+  "name": "aethercoo-docker-build",
+  "description": "Build and push AetherCOO backend to ECR",
+  "source": {
+    "type": "GITHUB",
+    "location": "https://github.com/UtkarshShankar12/aethercoo",
+    "buildspec": "buildspec.yml"
+  },
+  "artifacts": {"type": "NO_ARTIFACTS"},
+  "environment": {
+    "type": "LINUX_CONTAINER",
+    "image": "aws/codebuild/standard:7.0",
+    "computeType": "BUILD_GENERAL1_SMALL",
+    "privilegedMode": true
+  },
+  "serviceRole": "arn:aws:iam::/aethercoo-codebuild-role",
+  "logsConfig": {
+    "cloudWatchLogs": {"status": "ENABLED", "groupName": "/codebuild/aethercoo"}
+  }
+}
